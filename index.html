@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能充電導航 (Figma 完美還原版)</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/node-forge@1.3.1/dist/forge.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        #map { width: 100%; height: 100dvh; }
+
+        /* GPS 呼吸藍圈圈 */
+        .leaflet-gps-dot {
+            width: 15px; height: 15px;
+            border-radius: 50%;
+            background: #2563EB;
+            border: 2px solid white;
+            box-shadow: 0 0 5px rgba(0,0,0,0.4);
+            position: relative;
+        }
+        .leaflet-gps-dot::after {
+            content: ''; position: absolute;
+            width: 100%; height: 100%;
+            border-radius: 50%;
+            background: rgba(37, 99, 235, 0.5);
+            top: 0; left: 0;
+            animation: gps_pulse 2s infinite;
+        }
+        @keyframes gps_pulse {
+            0% { transform: scale(1); opacity: 1; }
+            100% { transform: scale(3); opacity: 0; }
+        }
+
+        /* ⚡ 專屬充電站氣泡標籤 */
+        .custom-marker-container { background: transparent; border: none; }
+        .station-bubble {
+            position: relative; display: inline-flex; align-items: center; justify-content: center;
+            padding: 4px 10px; border-radius: 6px; font-weight: 900; font-size: 13px; color: white;
+            box-shadow: 0 3px 6px rgba(0,0,0,0.3); border: 1.5px solid white; white-space: nowrap;
+            transition: all 0.2s ease-in-out;
+        }
+        .station-bubble::after {
+            content: ''; position: absolute; bottom: -6px; left: 50%;
+            transform: translateX(-50%); border-width: 6px 6px 0; border-style: solid;
+        }
+        .bubble-roaming { background-color: #00C4B6; }
+        .bubble-roaming::after { border-color: #00C4B6 transparent transparent transparent; }
+        .bubble-fast { background-color: #0ea5e9; }
+        .bubble-fast::after { border-color: #0ea5e9 transparent transparent transparent; }
+        .bubble-normal { background-color: #64748b; }
+        .bubble-normal::after { border-color: #64748b transparent transparent transparent; }
+        .bubble-selected { transform: scale(1.2); box-shadow: 0 0 12px rgba(37, 99, 235, 0.8); z-index: 1000 !important; }
+    </style>
+</head>
+<body class="bg-gray-100 relative overflow-hidden">
+
+    <div id="map"></div>
+
+    <div class="absolute top-4 left-4 bg-white/95 p-5 rounded-xl shadow-2xl z-[1000] w-80 backdrop-blur-sm border border-gray-100">
+        <h2 class="text-lg font-bold mb-4 text-gray-800">📍 智能路線規劃</h2>
+        
+        <div class="mb-4">
+            <button id="btn-gps" class="w-full py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-sm font-bold flex items-center justify-center transition-colors">
+                <span>🎯 獲取目前 GPS 位置</span>
+            </button>
+            <div id="gps-status" class="text-xs text-gray-500 mt-1 text-center">已定位: 25.0479, 121.5173</div>
+        </div>
+
+        <hr class="my-4 border-gray-200">
+
+        <div class="space-y-3">
+            <div>
+                <label class="block text-xs font-bold text-gray-600 mb-1">目前電量 (SOC %)</label>
+                <input type="number" id="input-soc" value="30" min="1" max="100" class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
+            </div>
+            <div class="flex gap-2">
+                <div class="w-1/2">
+                    <label class="block text-xs font-bold text-gray-600 mb-1">終點經度</label>
+                    <input type="text" id="input-dest-lng" value="120.6843502" class="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
+                </div>
+                <div class="w-1/2">
+                    <label class="block text-xs font-bold text-gray-600 mb-1">終點緯度</label>
+                    <input type="text" id="input-dest-lat" value="24.1372929" class="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
+                </div>
+            </div>
+
+            <div class="flex items-center pt-1 pb-2">
+                <input id="input-need-calc" type="checkbox" checked class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 cursor-pointer">
+                <label for="input-need-calc" class="ml-2 text-sm font-bold text-gray-700 cursor-pointer">強制重新計算 (needCalculation)</label>
+            </div>
+            
+            <button id="btn-submit" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-md transition-colors">
+                開始規劃路線
+            </button>
+        </div>
+    </div>
+
+    <div id="risk-warning" class="hidden absolute top-4 right-4 bg-white/95 p-3 rounded-lg shadow-lg border-l-4 border-red-500 z-[1000] text-sm w-64 backdrop-blur-sm">
+        <span class="text-red-600 font-bold">注意！</span> 此計算基於理論數據，存在誤差，請注意路況與車況。
+    </div>
+
+    <div id="loading-overlay" class="hidden absolute inset-0 z-[9999] flex-col items-center justify-center bg-white/80 backdrop-blur-sm">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-600 border-solid mb-4"></div>
+        <p class="text-blue-700 font-bold text-lg animate-pulse">正在為您計算最佳充電路線...</p>
+    </div>
+
+    <div id="empty-warning" class="hidden absolute inset-0 z-[9999] flex items-center justify-center p-4 bg-black/40">
+        <div class="bg-gray-200 p-6 rounded-lg shadow-xl max-w-sm w-full">
+            <p class="text-gray-700 text-lg leading-relaxed font-medium">
+                智能規劃計算最佳補能地點附近沒有適合充電站，已為您放寬距離判斷，誤差較大，請注意選擇。
+            </p>
+            <button onclick="closeEmptyWarning()" class="mt-6 w-full py-3 bg-blue-600 text-white rounded-lg font-bold">我知道了</button>
+        </div>
+    </div>
+
+    <div id="stations-carousel" class="absolute bottom-6 left-0 w-full overflow-x-auto pb-4 px-4 snap-x snap-mandatory flex space-x-4 z-[1000] no-scrollbar">
+    </div>
+
+    <script>
+        let map = null;
+        let currentPolyline = null;
+        let gpsDotMarker = null;
+        let allStationMarkers = []; 
+        let selectedStationId = null;
+        
+        let originalGeometry = null;
+        let stations = [];
+
+        let currentLat = 25.0479;
+        let currentLon = 121.5173;
+
+        function initApp() {
+            map = L.map('map', { zoomControl: false }).setView([currentLat, currentLon], 13);
+            
+            L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                attribution: '© Google Maps',
+                maxZoom: 20
+            }).addTo(map);
+
+            map.on('click', () => { selectStation(null); });
+        }
+
+        document.getElementById('btn-gps').addEventListener('click', () => {
+            const statusText = document.getElementById('gps-status');
+            statusText.innerText = "定位中...";
+            
+            if ("geolocation" in navigator) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        currentLat = position.coords.latitude;
+                        currentLon = position.coords.longitude;
+                        statusText.innerText = `已定位: ${currentLat.toFixed(4)}, ${currentLon.toFixed(4)}`;
+                        statusText.classList.replace('text-gray-500', 'text-green-600');
+
+                        const gpsDotIcon = L.divIcon({ className: 'leaflet-gps-dot', iconSize: [15, 15], iconAnchor: [7.5, 7.5] });
+                        if (gpsDotMarker) map.removeLayer(gpsDotMarker);
+                        gpsDotMarker = L.marker([currentLat, currentLon], { icon: gpsDotIcon, zIndexOffset: 999 }).addTo(map);
+                        map.flyTo([currentLat, currentLon], 15, { duration: 1.5 });
+                    },
+                    (error) => {
+                        statusText.innerText = "定位失敗，請手動輸入終點";
+                        statusText.classList.replace('text-gray-500', 'text-red-500');
+                    },
+                    { enableHighAccuracy: true, timeout: 5000 }
+                );
+            }
+        });
+
+        document.getElementById('btn-submit').addEventListener('click', async () => {
+            const soc = parseInt(document.getElementById('input-soc').value);
+            const destLng = parseFloat(document.getElementById('input-dest-lng').value);
+            const destLat = parseFloat(document.getElementById('input-dest-lat').value);
+            
+            const needCalculation = document.getElementById('input-need-calc').checked;
+
+            if (!soc || !destLng || !destLat) { alert("請填寫完整的 SOC 與終點座標！"); return; }
+
+            document.getElementById("loading-overlay").classList.replace("hidden", "flex");
+
+            const requestBody = {
+                "uid": "1acFDDCnRgeJ36/4ACEvBw==",
+                "currentSoc": soc,
+                "currentLon": currentLon, "currentLat": currentLat,
+                "destinationLon": destLng, "destinationLat": destLat,
+                "needCalculation": needCalculation,
+                "countryCode": "TW", "operatorIdList": ""
+            };
+
+            await fetchChargingPlan(requestBody);
+            document.getElementById("loading-overlay").classList.replace("flex", "hidden");
+        });
+
+        function decodePolyline(encoded) {
+            let points = []; let index = 0, len = encoded.length; let lat = 0, lng = 0;
+            while (index < len) {
+                let b, shift = 0, result = 0;
+                do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+                lat += ((result & 1) ? ~(result >> 1) : (result >> 1));
+                shift = 0; result = 0;
+                do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+                lng += ((result & 1) ? ~(result >> 1) : (result >> 1));
+                points.push([lat / 1E5, lng / 1E5]); 
+            }
+            return points;
+        }
+
+        function encryptPayload(rawJson) {
+            const rawBodyStr = JSON.stringify(rawJson);
+            const password = "ab217c68b1d544f3934c08a5219c25df";
+            const ivString = "dendenmapapi";
+            const deviceToken = "abc1234-12323";
+            const cipher = forge.cipher.createCipher('AES-GCM', password);
+            cipher.start({ iv: ivString, tagLength: 128 });
+            cipher.update(forge.util.createBuffer(rawBodyStr, 'utf8'));
+            cipher.finish();
+            return { deviceToken: deviceToken, queryString: forge.util.encode64(cipher.output.getBytes() + cipher.mode.tag.getBytes()) };
+        }
+
+        async function fetchChargingPlan(requestBody) {
+            try {
+                const response = await fetch("https://dev.den-den.app/API/EVMap/SmartChargingPlanner/plan", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(encryptPayload(requestBody))
+                });
+                const apiResponse = await response.json();
+
+                if (apiResponse.statusCode === 200 && apiResponse.data) {
+                    originalGeometry = apiResponse.data.geometry;
+                    stations = apiResponse.data.chargingPlanStationResults || [];
+                    
+                    selectedStationId = null;
+                    if (stations.length === 0) document.getElementById('empty-warning').classList.remove('hidden');
+                    
+                    drawRoute(originalGeometry);
+                    renderAllMarkers(); 
+                    renderCards();
+                } else if (apiResponse.statusCode === 4001) {
+                    alert("電量充足，可以直接抵達，無須充電！");
+                } else {
+                    alert("規劃失敗: " + (apiResponse.message || ""));
+                }
+            } catch (error) {
+                alert("無法連接到後端 API，請確認後端是否已設定 @CrossOrigin！");
+            }
+        }
+
+        function drawRoute(encodedStr, autoFitBounds = true) {
+            if (currentPolyline) map.removeLayer(currentPolyline);
+            if (!encodedStr) return;
+            
+            currentPolyline = L.polyline(decodePolyline(encodedStr), { color: '#2563EB', weight: 6, opacity: 0.8 }).addTo(map);
+            
+            if (autoFitBounds) {
+                map.fitBounds(currentPolyline.getBounds(), { padding: [50, 50] });
+            }
+        }
+
+        function renderAllMarkers() {
+            allStationMarkers.forEach(m => map.removeLayer(m));
+            allStationMarkers = [];
+
+            stations.forEach(item => {
+                const s = item.station;
+                const ocpiInfo = s.ocpi_station_info;
+                const isRoaming = ocpiInfo && ocpiInfo.station_id !== null && ocpiInfo.station_id !== "";
+                const isFast = parseFloat(s.DC_max_kW) >= 120;
+
+                let bubbleClass = 'bubble-normal'; let labelText = '一般';
+                if (isRoaming) { bubbleClass = 'bubble-roaming'; labelText = '⚡ 充電漫遊'; } 
+                else if (isFast) { bubbleClass = 'bubble-fast'; labelText = '快+'; }
+
+                const isSelected = selectedStationId === s.id;
+                if (isSelected) bubbleClass += ' bubble-selected';
+
+                const icon = L.divIcon({
+                    className: 'custom-marker-container',
+                    html: `<div class="station-bubble ${bubbleClass}">${labelText}</div>`,
+                    iconSize: null, iconAnchor: [40, 30] 
+                });
+
+                const marker = L.marker([parseFloat(s.coordinates.latitude), parseFloat(s.coordinates.longitude)], {
+                    icon: icon, zIndexOffset: isSelected ? 1000 : 0
+                }).addTo(map);
+
+                marker.on('click', () => { selectStation(s.id); });
+                allStationMarkers.push(marker);
+            });
+        }
+
+        // ⚡ 修正防呆：確保 riskWarning 存在才操作 classList
+        function selectStation(stationId) {
+            selectedStationId = stationId;
+            const riskWarning = document.getElementById('risk-warning');
+            
+            if (stationId) {
+                if (riskWarning) riskWarning.classList.remove('hidden');
+                const selectedData = stations.find(s => s.station.id === stationId);
+                
+                drawRoute(selectedData.geometry, false);
+                
+                const targetLat = parseFloat(selectedData.station.coordinates.latitude);
+                const targetLng = parseFloat(selectedData.station.coordinates.longitude);
+                map.flyTo([targetLat, targetLng], 15, { duration: 1.0 });
+                
+                const cardElement = document.getElementById(`card-${stationId}`);
+                if(cardElement) cardElement.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+            } else {
+                if (riskWarning) riskWarning.classList.add('hidden');
+                drawRoute(originalGeometry, true);
+            }
+
+            renderAllMarkers(); 
+            renderCards();      
+        }
+
+        function navigateToStation(stationId) {
+            const selectedData = stations.find(s => s.station.id === stationId);
+            if (!selectedData || !originalGeometry) return;
+
+            const originalPathArr = decodePolyline(originalGeometry);
+            const originLat = originalPathArr[0][0], originLng = originalPathArr[0][1];
+            const destLat = originalPathArr[originalPathArr.length - 1][0], destLng = originalPathArr[originalPathArr.length - 1][1];
+            const waypointLat = selectedData.station.coordinates.latitude, waypointLng = selectedData.station.coordinates.longitude;
+
+            const url = `https://www.google.com/maps/dir/?api=1&origin=${originLat},${originLng}&destination=${destLat},${destLng}&waypoints=${waypointLat},${waypointLng}&travelmode=driving`;
+            window.open(url, '_blank');
+        }
+
+        function closeEmptyWarning() { document.getElementById('empty-warning').classList.add('hidden'); }
+
+        function renderCards() {
+            const container = document.getElementById('stations-carousel');
+            container.innerHTML = ''; 
+
+            stations.forEach(item => {
+                const s = item.station;
+                const isSelected = selectedStationId === s.id;
+                
+                const totalPorts = s.ports ? s.ports.length : 0;
+                const availPorts = s.status; 
+                let stateStr = '未知狀態';
+                if (s.station_state === 0) stateStr = '營業中';
+                else if (s.station_state === 1) stateStr = '維護中';
+                else if (s.station_state === 2) stateStr = '建置中';
+                else if (s.station_state === 3) stateStr = '已移除';
+                
+                const portStatusStr = availPorts !== -1 
+                    ? `全部 ${totalPorts} · 可用 ${availPorts} · ${stateStr}` 
+                    : `全部 ${totalPorts} · ${stateStr}`;
+
+                let connectors = [];
+                if (s.type_CCS2 > 0) connectors.push('CCS2');
+                if (s.type_CCS1 > 0) connectors.push('CCS1');
+                if (s.type_CHAdeMO > 0) connectors.push('CHAdeMO');
+                if (s.type_J1772 > 0) connectors.push('J1772');
+                if (s.type_Type2 > 0) connectors.push('Type2');
+                const connectorStr = connectors.join(' • ') || '無規格資料';
+
+                const rawPrice = s.ports?.[0]?.charging_price?.[0]?.non_member_price;
+                let priceDisplayHTML = '';
+                
+                if (rawPrice !== undefined && rawPrice !== null && rawPrice !== '') {
+                    const formattedPrice = parseFloat(Number(rawPrice).toFixed(2));
+                    priceDisplayHTML = `<span class="font-bold text-2xl whitespace-nowrap ml-2 text-gray-900">${formattedPrice}<span class="text-sm font-normal text-gray-600 ml-1">元/度</span></span>`;
+                } else {
+                    priceDisplayHTML = `<span class="font-bold text-[15px] whitespace-nowrap ml-2 text-gray-400">費用未知</span>`;
+                }
+
+                const borderClass = isSelected ? 'ring-4 ring-blue-500 border-transparent shadow-2xl' : 'border-gray-200 shadow-md';
+                const btnClass = isSelected ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-blue-50 text-blue-600 hover:bg-blue-100';
+                const btnText = isSelected ? '開始導航 (含中繼站)' : '查看路線';
+
+                const highwayBadge = s.nearby_highway === 1 
+                    ? `<div class="inline-block bg-cyan-200 text-gray-900 px-3 py-1 rounded-full text-xs font-bold mb-3 tracking-wide">🛣️ 直上高速公路</div>` 
+                    : `<div class="inline-block bg-gray-200 text-gray-700 px-3 py-1 rounded-full text-xs font-bold mb-3 tracking-wide">🚗 平面道路</div>`;
+
+                const cardHTML = `
+                    <div id="card-${s.id}" onclick="selectStation('${s.id}')" 
+                         class="flex-none w-11/12 md:w-[340px] bg-white rounded-2xl p-5 snap-center cursor-pointer transition-all duration-200 border-2 box-border ${borderClass}">
+                        
+                        ${highwayBadge}
+
+                        <h3 class="font-bold text-xl truncate mb-1 text-gray-900">${s.name}</h3>
+                        
+                        <div class="text-sm text-gray-600 mb-3 font-medium">
+                            <span>${portStatusStr}</span>
+                        </div>
+
+                        <div class="flex justify-between items-end mb-4 min-h-[32px]">
+                            <span class="text-sm text-gray-500 truncate flex-1 tracking-wider">${connectorStr}</span>
+                            ${priceDisplayHTML}
+                        </div>
+                        
+                        <div class="flex justify-between text-center bg-gray-50/80 p-3 rounded-xl mb-4 text-xs font-medium border border-gray-100">
+                            <div>
+                                <div class="text-red-500 mb-1">預估<span class="text-gray-400">增加路程</span></div>
+                                <div class="text-red-600 text-lg font-bold">${item.estimatedDetourDistance} km</div>
+                            </div>
+                            <div>
+                                <div class="text-red-500 mb-1">預估<span class="text-gray-400">增加時間</span></div>
+                                <div class="text-red-600 text-lg font-bold">+${item.estimatedDetourTime} min</div>
+                            </div>
+                            <div>
+                                <div class="text-red-500 mb-1">預估<span class="text-gray-400">抵達電量</span></div>
+                                <div class="text-emerald-500 text-lg font-bold">${item.estimatedArrivalSoc}%</div>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-2">
+                            <button onclick="event.stopPropagation(); ${isSelected ? `navigateToStation('${s.id}')` : `selectStation('${s.id}')`}" 
+                                    class="w-full py-3.5 rounded-xl font-bold text-[15px] transition-colors shadow-sm ${btnClass}">
+                                ${btnText}
+                            </button>
+                        </div>
+                    </div>
+                `;
+                container.insertAdjacentHTML('beforeend', cardHTML);
+            });
+        }
+
+        window.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>
