@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>智能充電導航 (Figma 完美還原版)</title>
+    <title>智能充電導航 (Cloud Tasks 輪詢版)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/node-forge@1.3.1/dist/forge.min.js"></script>
@@ -107,7 +107,7 @@
 
     <div id="loading-overlay" class="hidden absolute inset-0 z-[9999] flex-col items-center justify-center bg-white/80 backdrop-blur-sm">
         <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-600 border-solid mb-4"></div>
-        <p class="text-blue-700 font-bold text-lg animate-pulse">正在為您計算最佳充電路線...</p>
+        <p id="loading-text" class="text-blue-700 font-bold text-lg animate-pulse">正在為您計算最佳充電路線...</p>
     </div>
 
     <div id="empty-warning" class="hidden absolute inset-0 z-[9999] flex items-center justify-center p-4 bg-black/40">
@@ -134,6 +134,9 @@
 
         let currentLat = 25.0479;
         let currentLon = 121.5173;
+
+        // 設定固定的 UID (對應你原本寫死的)
+        const FIXED_UID = "1acFDDCnRgeJ36/4ACEvBw==";
 
         function initApp() {
             map = L.map('map', { zoomControl: false }).setView([currentLat, currentLon], 13);
@@ -181,10 +184,12 @@
 
             if (!soc || !destLng || !destLat) { alert("請填寫完整的 SOC 與終點座標！"); return; }
 
+            // 顯示 Loading 並重置文字
             document.getElementById("loading-overlay").classList.replace("hidden", "flex");
+            document.getElementById("loading-text").innerText = "正在派發計算任務...";
 
             const requestBody = {
-                "uid": "1acFDDCnRgeJ36/4ACEvBw==",
+                "uid": FIXED_UID,
                 "currentSoc": soc,
                 "currentLon": currentLon, "currentLat": currentLat,
                 "destinationLon": destLng, "destinationLat": destLat,
@@ -193,7 +198,6 @@
             };
 
             await fetchChargingPlan(requestBody);
-            document.getElementById("loading-overlay").classList.replace("flex", "hidden");
         });
 
         function decodePolyline(encoded) {
@@ -222,15 +226,60 @@
             return { deviceToken: deviceToken, queryString: forge.util.encode64(cipher.output.getBytes() + cipher.mode.tag.getBytes()) };
         }
 
+        // ==========================================
+        // 核心改動：任務建立與輪詢邏輯
+        // ==========================================
+
+        // 第一步：發送 POST 請求建立任務
         async function fetchChargingPlan(requestBody) {
             try {
                 const response = await fetch("/api/EVMap/SmartChargingPlanner/plan", {
-                    method: "POST", headers: { "Content-Type": "application/json" },
+                    method: "POST", 
+                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(encryptPayload(requestBody))
                 });
                 const apiResponse = await response.json();
+                
+                // 檢查是否成功回傳 jobId (注意相容 statusCode 或 code)
+                const code = apiResponse.code || apiResponse.statusCode;
 
-                if (apiResponse.statusCode === 200 && apiResponse.data) {
+                if (code === 200 && apiResponse.data && apiResponse.data.jobId) {
+                    const jobId = apiResponse.data.jobId;
+                    document.getElementById("loading-text").innerText = "已進入雲端排隊，運算中...";
+                    // 開始輪詢查進度
+                    pollChargingPlanResult(FIXED_UID, jobId);
+                } else {
+                    alert("任務建立失敗: " + (apiResponse.message || "未知錯誤"));
+                    document.getElementById("loading-overlay").classList.replace("flex", "hidden");
+                }
+            } catch (error) {
+                alert("無法連接到後端 API，請確認連線！");
+                document.getElementById("loading-overlay").classList.replace("flex", "hidden");
+            }
+        }
+
+        // 第二步：使用 GET 請求輪詢檢查結果
+        async function pollChargingPlanResult(uid, jobId) {
+            try {
+                // 使用 URLSearchParams 自動對 uid 的特殊字元 (如 + 或 /) 進行 URLEncode
+                const params = new URLSearchParams({ uid: uid, jobId: jobId });
+                
+                const response = await fetch(`/api/EVMap/SmartChargingPlanner/plan?${params.toString()}`, {
+                    method: "GET",
+                    headers: { "Content-Type": "application/json" }
+                });
+                const apiResponse = await response.json();
+                const code = apiResponse.code || apiResponse.statusCode;
+
+                // 4002: PENDING (任務還在排隊或執行中)
+                if (code === 4002) {
+                    // 2秒後再查一次
+                    setTimeout(() => { pollChargingPlanResult(uid, jobId); }, 2000);
+                    return; // 結束這回合
+                } 
+                
+                // 200: SUCCESS (運算完成，拿到資料)
+                else if (code === 200 && apiResponse.data) {
                     originalGeometry = apiResponse.data.geometry;
                     stations = apiResponse.data.chargingPlanStationResults || [];
                     
@@ -240,15 +289,30 @@
                     drawRoute(originalGeometry);
                     renderAllMarkers(); 
                     renderCards();
-                } else if (apiResponse.statusCode === 4001) {
+                } 
+                
+                // 4001: 不需充電
+                else if (code === 4001) {
                     alert("電量充足，可以直接抵達，無須充電！");
-                } else {
+                } 
+                
+                // 其他錯誤 (404, 500 等)
+                else {
                     alert("規劃失敗: " + (apiResponse.message || ""));
                 }
+                
+                // 只要不是 4002 (Pending)，走到這邊代表任務有了結果(成功或失敗)，就可以關閉 Loading
+                document.getElementById("loading-overlay").classList.replace("flex", "hidden");
+
             } catch (error) {
-                alert("無法連接到後端 API，請確認後端是否已設定 @CrossOrigin！");
+                alert("查詢結果發生異常，請重試！");
+                document.getElementById("loading-overlay").classList.replace("flex", "hidden");
             }
         }
+
+        // ==========================================
+        // UI 渲染與其他邏輯 (維持不變)
+        // ==========================================
 
         function drawRoute(encodedStr, autoFitBounds = true) {
             if (currentPolyline) map.removeLayer(currentPolyline);
@@ -293,7 +357,6 @@
             });
         }
 
-        // ⚡ 修正防呆：確保 riskWarning 存在才操作 classList
         function selectStation(stationId) {
             selectedStationId = stationId;
             const riskWarning = document.getElementById('risk-warning');
@@ -413,7 +476,7 @@
                         </div>
                         
                         <div class="mt-2">
-                            <button onclick="event.stopPropagation(); ${isSelected ? `navigateToStation('${s.id}')` : `selectStation('${s.id}')`}" 
+                            <button onclick="event.stopPropagation(); ${isSelected ? `MapsToStation('${s.id}')` : `selectStation('${s.id}')`}" 
                                     class="w-full py-3.5 rounded-xl font-bold text-[15px] transition-colors shadow-sm ${btnClass}">
                                 ${btnText}
                             </button>
