@@ -38,7 +38,9 @@
         }
 
         /* ⚡ 專屬充電站氣泡標籤 */
-        .custom-marker-container { background: transparent; border: none; }
+        .custom-marker-container, .custom-start-icon, .custom-dest-icon { 
+            background: transparent; border: none; 
+        }
         .station-bubble {
             position: relative; display: inline-flex; align-items: center; justify-content: center;
             padding: 4px 10px; border-radius: 6px; font-weight: 900; font-size: 13px; color: white;
@@ -94,11 +96,11 @@
             <div class="flex gap-2">
                 <div class="w-1/2">
                     <label class="block text-xs font-bold text-gray-600 mb-1">終點經度</label>
-                    <input type="text" id="input-dest-lng" value="120.6843502" class="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
+                    <input type="text" id="input-dest-lng" class="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
                 </div>
                 <div class="w-1/2">
                     <label class="block text-xs font-bold text-gray-600 mb-1">終點緯度</label>
-                    <input type="text" id="input-dest-lat" value="24.1372929" class="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
+                    <input type="text" id="input-dest-lat" class="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
                 </div>
             </div>
 
@@ -144,27 +146,21 @@
         let originalGeometry = null;
         let stations = [];
 
-        // ✅ 定義路況顏色
-        const TRAFFIC_COLORS = {
-            'smooth': '#2563EB', // 藍色: 順暢
-            'moderate': '#F59E0B', // 橙色: 有些擁堵
-            'heavy': '#EF4444', // 紅色: 非常擁堵
-            'severe': '#B91C1C'  // 深紅色: 嚴重擁堵
-        };
+        // 記錄使用者選取的起終點大頭針
+        let startMarker = null;
+        let destMarker = null;
 
-        // ✅ 給予預設起點，避免初始載入時出現 undefined
+        // 預設起點座標 (備用)
         let currentLat = 23.9930901;
         let currentLon = 121.5988313;
 
-        // 設定固定的 UID (對應你原本寫死的)
         const FIXED_UID = "1acFDDCnRgeJ36/4ACEvBw==";
 
         function initApp() {
-            // 1. 先把預設座標（備用）帶入輸入框
+            // 預設將起點帶入輸入框
             document.getElementById('input-src-lat').value = currentLat;
             document.getElementById('input-src-lng').value = currentLon;
 
-            // 2. 初始化地圖
             map = L.map('map', { zoomControl: false }).setView([currentLat, currentLon], 13);
             
             L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
@@ -172,16 +168,69 @@
                 maxZoom: 20
             }).addTo(map);
 
-            map.on('click', () => { selectStation(null); });
+            // 點擊地圖時，彈出氣泡讓使用者選擇起終點
+            map.on('click', (e) => { 
+                selectStation(null); // 如果有選充電站，先取消
 
-            // 3. 地圖載入完成後，立刻自動執行一次 GPS 定位！
+                const lat = e.latlng.lat.toFixed(7);
+                const lng = e.latlng.lng.toFixed(7);
+
+                const popupContent = `
+                    <div class="text-center min-w-[150px]">
+                        <p class="text-sm text-gray-700 font-bold mb-3 border-b pb-1">📍 選擇此地點為：</p>
+                        <div class="flex gap-2 justify-center">
+                            <button onclick="window.setStartLocation(${lat}, ${lng})" class="px-3 py-1.5 bg-green-500 text-white rounded shadow text-sm hover:bg-green-600 font-bold transition-colors">起點</button>
+                            <button onclick="window.setDestLocation(${lat}, ${lng})" class="px-3 py-1.5 bg-red-500 text-white rounded shadow text-sm hover:bg-red-600 font-bold transition-colors">終點</button>
+                        </div>
+                    </div>
+                `;
+
+                L.popup({ closeButton: false, className: 'custom-popup' })
+                    .setLatLng(e.latlng)
+                    .setContent(popupContent)
+                    .openOn(map);
+            });
+
+            // 載入完成後立刻執行 GPS 定位與啟用滑鼠拖曳
             autoFetchGPS();
-
-            // ✅ 4. 啟用底部卡片的滑鼠拖曳功能
             enableDragScroll();
         }
 
-        // 將定位邏輯獨立成一個 Function
+        // 將座標設為起點
+        window.setStartLocation = function(lat, lng) {
+            document.getElementById('input-src-lat').value = lat;
+            document.getElementById('input-src-lng').value = lng;
+            currentLat = lat;
+            currentLon = lng;
+            map.closePopup();
+
+            if (startMarker) map.removeLayer(startMarker);
+            if (gpsDotMarker) map.removeLayer(gpsDotMarker); // 隱藏原本的 GPS 點
+
+            const startIcon = L.divIcon({
+                className: 'custom-start-icon',
+                html: `<div class="bg-green-500 text-white rounded-full w-8 h-8 flex items-center justify-center font-bold border-2 border-white shadow-lg text-sm">起</div>`,
+                iconSize: [32, 32], iconAnchor: [16, 32]
+            });
+            startMarker = L.marker([lat, lng], { icon: startIcon, zIndexOffset: 900 }).addTo(map);
+        };
+
+        // 將座標設為終點
+        window.setDestLocation = function(lat, lng) {
+            document.getElementById('input-dest-lat').value = lat;
+            document.getElementById('input-dest-lng').value = lng;
+            map.closePopup();
+
+            if (destMarker) map.removeLayer(destMarker);
+
+            const destIcon = L.divIcon({
+                className: 'custom-dest-icon',
+                html: `<div class="bg-red-500 text-white rounded-full w-8 h-8 flex items-center justify-center font-bold border-2 border-white shadow-lg text-sm">終</div>`,
+                iconSize: [32, 32], iconAnchor: [16, 32]
+            });
+            destMarker = L.marker([lat, lng], { icon: destIcon, zIndexOffset: 900 }).addTo(map);
+        };
+
         function autoFetchGPS() {
             const statusText = document.getElementById('gps-status');
             statusText.innerText = "自動定位中...";
@@ -192,23 +241,16 @@
                         currentLat = position.coords.latitude;
                         currentLon = position.coords.longitude;
 
-                        // 定位成功後，把真實座標更新到畫面上的輸入框
-                        document.getElementById('input-src-lat').value = currentLat.toFixed(7);
-                        document.getElementById('input-src-lng').value = currentLon.toFixed(7);
-
                         statusText.innerText = `已定位: ${currentLat.toFixed(4)}, ${currentLon.toFixed(4)}`;
                         statusText.classList.replace('text-gray-500', 'text-green-600');
 
-                        const gpsDotIcon = L.divIcon({ className: 'leaflet-gps-dot', iconSize: [15, 15], iconAnchor: [7.5, 7.5] });
-                        if (gpsDotMarker) map.removeLayer(gpsDotMarker);
-                        gpsDotMarker = L.marker([currentLat, currentLon], { icon: gpsDotIcon, zIndexOffset: 999 }).addTo(map);
+                        // 自動將 GPS 位置設為起點大頭針
+                        window.setStartLocation(currentLat, currentLon);
                         
-                        // 飛到使用者真實的 GPS 位置
                         map.flyTo([currentLat, currentLon], 15, { duration: 1.5 });
                     },
                     (error) => {
-                        // 如果使用者拒絕授權，或定位失敗，就提示他手動輸入，地圖會停在預設位置
-                        statusText.innerText = "定位失敗，請手動輸入起點";
+                        statusText.innerText = "定位失敗，請手動點擊地圖選擇起點";
                         statusText.classList.replace('text-gray-500', 'text-red-500');
                     },
                     { enableHighAccuracy: true, timeout: 5000 }
@@ -218,12 +260,10 @@
             }
         }
 
-        // 原本的 GPS 按鈕，現在只需要呼叫這個 Function 即可
         document.getElementById('btn-gps').addEventListener('click', autoFetchGPS);
 
         document.getElementById('btn-submit').addEventListener('click', async () => {
             const soc = parseInt(document.getElementById('input-soc').value);
-            // 從畫面上的輸入框讀取起點座標
             const srcLng = parseFloat(document.getElementById('input-src-lng').value);
             const srcLat = parseFloat(document.getElementById('input-src-lat').value);
             const destLng = parseFloat(document.getElementById('input-dest-lng').value);
@@ -231,24 +271,22 @@
             
             const needCalculation = document.getElementById('input-need-calc').checked;
 
-            if (!soc || !srcLng || !srcLat || !destLng || !destLat) { 
-                alert("請填寫完整的 SOC、起點與終點座標！"); 
+            if (!soc || !srcLng || !srcLat || !destLng || !destLat || isNaN(srcLng) || isNaN(destLng)) { 
+                alert("請填寫完整的 SOC，並在地圖上點擊選擇【起點】與【終點】！"); 
                 return; 
             }
 
-            // 更新全域變數 (為了後續畫圖或計算使用)
             currentLat = srcLat;
             currentLon = srcLng;
 
-            // 顯示 Loading 並重置文字
             document.getElementById("loading-overlay").classList.replace("hidden", "flex");
             document.getElementById("loading-text").innerText = "正在派發計算任務...";
 
             const requestBody = {
                 "uid": FIXED_UID,
                 "currentSoc": soc,
-                "currentLon": srcLng,  // 帶入畫面輸入的值
-                "currentLat": srcLat,  // 帶入畫面輸入的值
+                "currentLon": srcLng,  
+                "currentLat": srcLat,  
                 "destinationLon": destLng, 
                 "destinationLat": destLat,
                 "needCalculation": needCalculation,
@@ -284,11 +322,6 @@
             return { deviceToken: deviceToken, queryString: forge.util.encode64(cipher.output.getBytes() + cipher.mode.tag.getBytes()) };
         }
 
-        // ==========================================
-        // 核心改動：任務建立與輪詢邏輯
-        // ==========================================
-
-        // 第一步：發送 POST 請求建立任務
         async function fetchChargingPlan(requestBody) {
             try {
                 const response = await fetch("/api/EVMap/SmartChargingPlanner/plan", {
@@ -297,31 +330,26 @@
                     body: JSON.stringify(encryptPayload(requestBody))
                 });
                 const apiResponse = await response.json();
-                
-                // 檢查是否成功回傳 jobId (注意相容 statusCode 或 code)
                 const code = apiResponse.code || apiResponse.statusCode;
 
                 if (code === 200 && apiResponse.data && apiResponse.data.jobId) {
                     const jobId = apiResponse.data.jobId;
                     document.getElementById("loading-text").innerText = "已進入雲端排隊，運算中...";
-                    // 開始輪詢查進度
                     pollChargingPlanResult(FIXED_UID, jobId);
                 } else {
                     alert("任務建立失敗: " + (apiResponse.message || "未知錯誤"));
                     document.getElementById("loading-overlay").classList.replace("flex", "hidden");
                 }
             } catch (error) {
+                console.error("fetchChargingPlan Error:", error);
                 alert("無法連接到後端 API，請確認連線！");
                 document.getElementById("loading-overlay").classList.replace("flex", "hidden");
             }
         }
 
-        // 第二步：使用 GET 請求輪詢檢查結果
         async function pollChargingPlanResult(uid, jobId) {
             try {
-                // 使用 URLSearchParams 自動對 uid 的特殊字元 (如 + 或 /) 進行 URLEncode
                 const params = new URLSearchParams({ uid: uid, jobId: jobId });
-
                 const response = await fetch(`/api/EVMap/SmartChargingPlanner/plan?${params.toString()}`, {
                     method: "GET",
                     headers: { "Content-Type": "application/json" }
@@ -329,14 +357,11 @@
                 const apiResponse = await response.json();
                 const code = apiResponse.code || apiResponse.statusCode;
 
-                // 4001: PENDING (任務還在排隊或執行中)
-                if (code === 4001) {
-                    // 2秒後再查一次
+                if (code === 4001 || code === 4002 && apiResponse.message.includes("pending")) {
+                    // 若後端回傳表示還在運算中，2秒後重試 (這裡兼容了你原本的 4001/4002 pending 設定)
                     setTimeout(() => { pollChargingPlanResult(uid, jobId); }, 2000);
-                    return; // 結束這回合
+                    return; 
                 } 
-                
-                // 200: SUCCESS (運算完成，拿到資料)
                 else if (code === 200 && apiResponse.data) {
                     originalGeometry = apiResponse.data.geometry;
                     stations = apiResponse.data.chargingPlanStationResults || [];
@@ -348,46 +373,34 @@
                     renderAllMarkers(); 
                     renderCards();
                 } 
-                
-                // 4002: 不需充電
-                else if (code === 4002) {
+                else if (code === 4002 || code === 4001 && apiResponse.message.includes("No need")) {
                     alert("電量充足，可以直接抵達，無須充電！");
                 } 
-                
-                // 其他錯誤 (404, 500 等)
                 else {
                     alert("規劃失敗: " + (apiResponse.message || ""));
                 }
                 
-                // 只要不是 4001 (Pending)，走到這邊代表任務有了結果(成功或失敗)，就可以關閉 Loading
                 document.getElementById("loading-overlay").classList.replace("flex", "hidden");
-
             } catch (error) {
+                console.error("前端解析發生嚴重錯誤：", error); 
                 alert("查詢結果發生異常，請重試！");
                 document.getElementById("loading-overlay").classList.replace("flex", "hidden");
             }
         }
 
-        // ==========================================
-        // UI 渲染與其他邏輯 (維持不變)
-        // ==========================================
         function drawRoute(encodedStr, autoFitBounds = true) {
-            // 1. 清除舊路線
             if (currentPolyline) map.removeLayer(currentPolyline);
             if (!encodedStr) return;
             
-            // 2. 解析座標
             const points = decodePolyline(encodedStr);
 
-            // 3. 畫出統一的深藍色路線 (移除複雜的分段邏輯，回歸極致效能)
             currentPolyline = L.polyline(points, {
-                color: '#1D4ED8', // 深藍色 (Tailwind blue-700)
+                color: '#1D4ED8', // 深藍色
                 weight: 6,
                 opacity: 0.8,
-                lineJoin: 'round' // 讓路線轉彎處看起來更圓滑
+                lineJoin: 'round'
             }).addTo(map);
 
-            // 4. 自動縮放畫面
             if (autoFitBounds) {
                 map.fitBounds(currentPolyline.getBounds(), { padding: [50, 50] });
             }
@@ -555,9 +568,7 @@
             });
         }
 
-        // ==========================================
-        // 擴充功能：支援電腦版滑鼠拖曳橫向滾動 (極致平滑版)
-        // ==========================================
+        // 電腦版滑鼠平滑拖曳功能
         function enableDragScroll() {
             const slider = document.getElementById('stations-carousel');
             let isDown = false;
@@ -571,9 +582,7 @@
                 slider.classList.add('cursor-grabbing');
                 slider.classList.remove('cursor-grab');
                 
-                // 🛑 核心魔法：滑鼠按下時，暫時移除 CSS 的磁吸對齊功能，讓拖曳毫無阻力
                 slider.classList.remove('snap-x', 'snap-mandatory');
-                // 強制設定滾動行為為 auto，避免被全域 smooth 影響造成卡頓
                 slider.style.scrollBehavior = 'auto'; 
 
                 startX = e.pageX - slider.offsetLeft;
@@ -586,7 +595,6 @@
                 slider.classList.remove('cursor-grabbing');
                 slider.classList.add('cursor-grab');
                 
-                // 🟢 滑鼠離開時：恢復磁吸對齊
                 slider.classList.add('snap-x', 'snap-mandatory');
                 slider.style.scrollBehavior = '';
             });
@@ -596,7 +604,6 @@
                 slider.classList.remove('cursor-grabbing');
                 slider.classList.add('cursor-grab');
                 
-                // 🟢 滑鼠放開時：恢復磁吸對齊，這時瀏覽器會自動順滑地滑到最近的卡片
                 slider.classList.add('snap-x', 'snap-mandatory');
                 slider.style.scrollBehavior = '';
             });
@@ -606,7 +613,6 @@
                 e.preventDefault(); 
                 const x = e.pageX - slider.offsetLeft;
                 
-                // 拖曳靈敏度：1.2 是一個比較接近原生手機滑動的舒適比例
                 const walk = (x - startX) * 1.2; 
                 slider.scrollLeft = scrollLeft - walk;
             });
