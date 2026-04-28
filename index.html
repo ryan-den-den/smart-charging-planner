@@ -224,7 +224,7 @@
 
         async function fetchChargingPlan(requestBody) {
             try {
-                const response = await fetch("https://dev.den-den.app/API/EVMap/SmartChargingPlanner/plan", {
+                const response = await fetch("/api/EVMap/SmartChargingPlanner/plan", {
                     method: "POST", headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(encryptPayload(requestBody))
                 });
