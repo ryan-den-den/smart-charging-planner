@@ -271,8 +271,8 @@
                 const apiResponse = await response.json();
                 const code = apiResponse.code || apiResponse.statusCode;
 
-                // 4002: PENDING (任務還在排隊或執行中)
-                if (code === 4002) {
+                // 4001: PENDING (任務還在排隊或執行中)
+                if (code === 4001) {
                     // 2秒後再查一次
                     setTimeout(() => { pollChargingPlanResult(uid, jobId); }, 2000);
                     return; // 結束這回合
@@ -291,8 +291,8 @@
                     renderCards();
                 } 
                 
-                // 4001: 不需充電
-                else if (code === 4001) {
+                // 4002: 不需充電
+                else if (code === 4002) {
                     alert("電量充足，可以直接抵達，無須充電！");
                 } 
                 
