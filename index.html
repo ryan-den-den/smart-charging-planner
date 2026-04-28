@@ -371,7 +371,7 @@
         // ==========================================
         // UI 渲染與其他邏輯 (維持不變)
         // ==========================================
-        function drawRoute(encodedStr) {
+        function drawRoute(encodedStr, autoFitBounds = true) {
             // 1. 清除舊路線
             if (currentPolyline) map.removeLayer(currentPolyline);
             if (!encodedStr) return;
@@ -388,9 +388,9 @@
             }).addTo(map);
 
             // 4. 自動縮放畫面
-            // if (autoFitBounds) {
-            //     map.fitBounds(currentPolyline.getBounds(), { padding: [50, 50] });
-            // }
+            if (autoFitBounds) {
+                map.fitBounds(currentPolyline.getBounds(), { padding: [50, 50] });
+            }
         }
 
         function renderAllMarkers() {
@@ -443,7 +443,7 @@
                 if(cardElement) cardElement.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
             } else {
                 if (riskWarning) riskWarning.classList.add('hidden');
-                drawRoute(originalGeometry);
+                drawRoute(originalGeometry, true);
             }
 
             renderAllMarkers(); 
