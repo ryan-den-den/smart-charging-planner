@@ -538,7 +538,7 @@
         }
 
         // ==========================================
-        // 擴充功能：支援電腦版滑鼠拖曳橫向滾動
+        // 擴充功能：支援電腦版滑鼠拖曳橫向滾動 (極致平滑版)
         // ==========================================
         function enableDragScroll() {
             const slider = document.getElementById('stations-carousel');
@@ -546,34 +546,50 @@
             let startX;
             let scrollLeft;
 
-            // 加上 Tailwind 的游標樣式，讓滑鼠移過去呈現「手掌」抓取狀態
             slider.classList.add('cursor-grab');
 
             slider.addEventListener('mousedown', (e) => {
                 isDown = true;
                 slider.classList.add('cursor-grabbing');
                 slider.classList.remove('cursor-grab');
+                
+                // 🛑 核心魔法：滑鼠按下時，暫時移除 CSS 的磁吸對齊功能，讓拖曳毫無阻力
+                slider.classList.remove('snap-x', 'snap-mandatory');
+                // 強制設定滾動行為為 auto，避免被全域 smooth 影響造成卡頓
+                slider.style.scrollBehavior = 'auto'; 
+
                 startX = e.pageX - slider.offsetLeft;
                 scrollLeft = slider.scrollLeft;
             });
 
             slider.addEventListener('mouseleave', () => {
+                if (!isDown) return;
                 isDown = false;
                 slider.classList.remove('cursor-grabbing');
                 slider.classList.add('cursor-grab');
+                
+                // 🟢 滑鼠離開時：恢復磁吸對齊
+                slider.classList.add('snap-x', 'snap-mandatory');
+                slider.style.scrollBehavior = '';
             });
 
             slider.addEventListener('mouseup', () => {
                 isDown = false;
                 slider.classList.remove('cursor-grabbing');
                 slider.classList.add('cursor-grab');
+                
+                // 🟢 滑鼠放開時：恢復磁吸對齊，這時瀏覽器會自動順滑地滑到最近的卡片
+                slider.classList.add('snap-x', 'snap-mandatory');
+                slider.style.scrollBehavior = '';
             });
 
             slider.addEventListener('mousemove', (e) => {
                 if (!isDown) return;
-                e.preventDefault(); // 避免拖曳時反白到卡片裡面的文字
+                e.preventDefault(); 
                 const x = e.pageX - slider.offsetLeft;
-                const walk = (x - startX) * 1.5; // 1.5 是滑動靈敏度，數字越大滑得越快
+                
+                // 拖曳靈敏度：1.2 是一個比較接近原生手機滑動的舒適比例
+                const walk = (x - startX) * 1.2; 
                 slider.scrollLeft = scrollLeft - walk;
             });
         }
