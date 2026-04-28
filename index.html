@@ -371,42 +371,23 @@
         // ==========================================
         // UI 渲染與其他邏輯 (維持不變)
         // ==========================================
-
         function drawRoute(encodedStr, autoFitBounds = true) {
+            // 1. 清除舊路線
             if (currentPolyline) map.removeLayer(currentPolyline);
             if (!encodedStr) return;
             
+            // 2. 解析座標
             const points = decodePolyline(encodedStr);
 
-            // 1. 建立一個空的 FeatureGroup 來裝多條不同顏色的線
-            currentPolyline = L.featureGroup().addTo(map);
+            // 3. 畫出統一的深藍色路線 (移除複雜的分段邏輯，回歸極致效能)
+            currentPolyline = L.polyline(points, {
+                color: '#1D4ED8', // 深藍色 (Tailwind blue-700)
+                weight: 6,
+                opacity: 0.8,
+                lineJoin: 'round' // 讓路線轉彎處看起來更圓滑
+            }).addTo(map);
 
-            // 2. 模擬分段路況 (真實情況這裡應該由後端 OSRM 或 Google API 告知每段路況)
-            const numSegments = 5; 
-            const segmentSize = Math.floor(points.length / numSegments);
-            const trafficLevels = ['smooth', 'moderate', 'heavy', 'severe'];
-
-            for (let i = 0; i < numSegments; i++) {
-                const start = i * segmentSize;
-                // 確保最後一段有確實包到終點座標
-                const end = (i === numSegments - 1) ? points.length - 1 : (i + 1) * segmentSize;
-                
-                // 擷取這一段的經緯度點
-                const segmentPoints = points.slice(start, end + 1);
-                
-                // 隨機塞一個顏色
-                const randomTrafficLevel = trafficLevels[Math.floor(Math.random() * trafficLevels.length)];
-                const segmentColor = TRAFFIC_COLORS[randomTrafficLevel];
-
-                // 3. 用原生的 L.polyline 畫這一段，並加進群組裡
-                L.polyline(segmentPoints, {
-                    color: segmentColor,
-                    weight: 6,
-                    opacity: 0.8
-                }).addTo(currentPolyline);
-            }
-
-            // 因為 currentPolyline 是 FeatureGroup，getBounds() 依然可以完美運作！
+            // 4. 自動縮放畫面
             if (autoFitBounds) {
                 map.fitBounds(currentPolyline.getBounds(), { padding: [50, 50] });
             }
