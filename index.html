@@ -168,6 +168,9 @@
 
             // 3. 地圖載入完成後，立刻自動執行一次 GPS 定位！
             autoFetchGPS();
+
+            // ✅ 4. 啟用底部卡片的滑鼠拖曳功能
+            enableDragScroll();
         }
 
         // 將定位邏輯獨立成一個 Function
@@ -531,6 +534,47 @@
                     </div>
                 `;
                 container.insertAdjacentHTML('beforeend', cardHTML);
+            });
+        }
+
+        // ==========================================
+        // 擴充功能：支援電腦版滑鼠拖曳橫向滾動
+        // ==========================================
+        function enableDragScroll() {
+            const slider = document.getElementById('stations-carousel');
+            let isDown = false;
+            let startX;
+            let scrollLeft;
+
+            // 加上 Tailwind 的游標樣式，讓滑鼠移過去呈現「手掌」抓取狀態
+            slider.classList.add('cursor-grab');
+
+            slider.addEventListener('mousedown', (e) => {
+                isDown = true;
+                slider.classList.add('cursor-grabbing');
+                slider.classList.remove('cursor-grab');
+                startX = e.pageX - slider.offsetLeft;
+                scrollLeft = slider.scrollLeft;
+            });
+
+            slider.addEventListener('mouseleave', () => {
+                isDown = false;
+                slider.classList.remove('cursor-grabbing');
+                slider.classList.add('cursor-grab');
+            });
+
+            slider.addEventListener('mouseup', () => {
+                isDown = false;
+                slider.classList.remove('cursor-grabbing');
+                slider.classList.add('cursor-grab');
+            });
+
+            slider.addEventListener('mousemove', (e) => {
+                if (!isDown) return;
+                e.preventDefault(); // 避免拖曳時反白到卡片裡面的文字
+                const x = e.pageX - slider.offsetLeft;
+                const walk = (x - startX) * 1.5; // 1.5 是滑動靈敏度，數字越大滑得越快
+                slider.scrollLeft = scrollLeft - walk;
             });
         }
 
