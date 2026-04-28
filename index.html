@@ -79,6 +79,18 @@
                 <label class="block text-xs font-bold text-gray-600 mb-1">目前電量 (SOC %)</label>
                 <input type="number" id="input-soc" value="30" min="1" max="100" class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
             </div>
+            
+            <div class="flex gap-2">
+                <div class="w-1/2">
+                    <label class="block text-xs font-bold text-gray-600 mb-1">起點經度</label>
+                    <input type="text" id="input-src-lng" class="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
+                </div>
+                <div class="w-1/2">
+                    <label class="block text-xs font-bold text-gray-600 mb-1">起點緯度</label>
+                    <input type="text" id="input-src-lat" class="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
+                </div>
+            </div>
+
             <div class="flex gap-2">
                 <div class="w-1/2">
                     <label class="block text-xs font-bold text-gray-600 mb-1">終點經度</label>
@@ -132,6 +144,7 @@
         let originalGeometry = null;
         let stations = [];
 
+        // ✅ 修正：給予預設起點，避免初始載入時出現 undefined
         let currentLat = 23.9930901;
         let currentLon = 121.5988313;
 
@@ -139,6 +152,11 @@
         const FIXED_UID = "1acFDDCnRgeJ36/4ACEvBw==";
 
         function initApp() {
+            // 1. 先把預設座標（備用）帶入輸入框
+            document.getElementById('input-src-lat').value = currentLat;
+            document.getElementById('input-src-lng').value = currentLon;
+
+            // 2. 初始化地圖
             map = L.map('map', { zoomControl: false }).setView([currentLat, currentLon], 13);
             
             L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
@@ -147,42 +165,69 @@
             }).addTo(map);
 
             map.on('click', () => { selectStation(null); });
+
+            // 3. 地圖載入完成後，立刻自動執行一次 GPS 定位！
+            autoFetchGPS();
         }
 
-        document.getElementById('btn-gps').addEventListener('click', () => {
+        // 將定位邏輯獨立成一個 Function
+        function autoFetchGPS() {
             const statusText = document.getElementById('gps-status');
-            statusText.innerText = "定位中...";
+            statusText.innerText = "自動定位中...";
             
             if ("geolocation" in navigator) {
                 navigator.geolocation.getCurrentPosition(
                     (position) => {
                         currentLat = position.coords.latitude;
                         currentLon = position.coords.longitude;
+
+                        // 定位成功後，把真實座標更新到畫面上的輸入框
+                        document.getElementById('input-src-lat').value = currentLat.toFixed(7);
+                        document.getElementById('input-src-lng').value = currentLon.toFixed(7);
+
                         statusText.innerText = `已定位: ${currentLat.toFixed(4)}, ${currentLon.toFixed(4)}`;
                         statusText.classList.replace('text-gray-500', 'text-green-600');
 
                         const gpsDotIcon = L.divIcon({ className: 'leaflet-gps-dot', iconSize: [15, 15], iconAnchor: [7.5, 7.5] });
                         if (gpsDotMarker) map.removeLayer(gpsDotMarker);
                         gpsDotMarker = L.marker([currentLat, currentLon], { icon: gpsDotIcon, zIndexOffset: 999 }).addTo(map);
+                        
+                        // 飛到使用者真實的 GPS 位置
                         map.flyTo([currentLat, currentLon], 15, { duration: 1.5 });
                     },
                     (error) => {
-                        statusText.innerText = "定位失敗，請手動輸入終點";
+                        // 如果使用者拒絕授權，或定位失敗，就提示他手動輸入，地圖會停在預設位置
+                        statusText.innerText = "定位失敗，請手動輸入起點";
                         statusText.classList.replace('text-gray-500', 'text-red-500');
                     },
                     { enableHighAccuracy: true, timeout: 5000 }
                 );
+            } else {
+                statusText.innerText = "瀏覽器不支援定位功能";
             }
-        });
+        }
+
+        // 原本的 GPS 按鈕，現在只需要呼叫這個 Function 即可
+        document.getElementById('btn-gps').addEventListener('click', autoFetchGPS);
 
         document.getElementById('btn-submit').addEventListener('click', async () => {
             const soc = parseInt(document.getElementById('input-soc').value);
+            // 從畫面上的輸入框讀取起點座標
+            const srcLng = parseFloat(document.getElementById('input-src-lng').value);
+            const srcLat = parseFloat(document.getElementById('input-src-lat').value);
             const destLng = parseFloat(document.getElementById('input-dest-lng').value);
             const destLat = parseFloat(document.getElementById('input-dest-lat').value);
             
             const needCalculation = document.getElementById('input-need-calc').checked;
 
-            if (!soc || !destLng || !destLat) { alert("請填寫完整的 SOC 與終點座標！"); return; }
+            if (!soc || !srcLng || !srcLat || !destLng || !destLat) { 
+                alert("請填寫完整的 SOC、起點與終點座標！"); 
+                return; 
+            }
+
+            // 更新全域變數 (為了後續畫圖或計算使用)
+            currentLat = srcLat;
+            currentLon = srcLng;
 
             // 顯示 Loading 並重置文字
             document.getElementById("loading-overlay").classList.replace("hidden", "flex");
@@ -191,8 +236,10 @@
             const requestBody = {
                 "uid": FIXED_UID,
                 "currentSoc": soc,
-                "currentLon": currentLon, "currentLat": currentLat,
-                "destinationLon": destLng, "destinationLat": destLat,
+                "currentLon": srcLng,  // 帶入畫面輸入的值
+                "currentLat": srcLat,  // 帶入畫面輸入的值
+                "destinationLon": destLng, 
+                "destinationLat": destLat,
                 "needCalculation": needCalculation,
                 "countryCode": "TW", "operatorIdList": ""
             };
@@ -230,10 +277,12 @@
         // 核心改動：任務建立與輪詢邏輯
         // ==========================================
 
+        const apiUrl = "/api";
+
         // 第一步：發送 POST 請求建立任務
         async function fetchChargingPlan(requestBody) {
             try {
-                const response = await fetch("/api/EVMap/SmartChargingPlanner/plan", {
+                const response = await fetch(`${apiUrl}/EVMap/SmartChargingPlanner/plan`, {
                     method: "POST", 
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(encryptPayload(requestBody))
@@ -263,8 +312,8 @@
             try {
                 // 使用 URLSearchParams 自動對 uid 的特殊字元 (如 + 或 /) 進行 URLEncode
                 const params = new URLSearchParams({ uid: uid, jobId: jobId });
-                
-                const response = await fetch(`/api/EVMap/SmartChargingPlanner/plan?${params.toString()}`, {
+
+                const response = await fetch(`${apiUrl}?${params.toString()}`, {
                     method: "GET",
                     headers: { "Content-Type": "application/json" }
                 });
@@ -301,7 +350,7 @@
                     alert("規劃失敗: " + (apiResponse.message || ""));
                 }
                 
-                // 只要不是 4002 (Pending)，走到這邊代表任務有了結果(成功或失敗)，就可以關閉 Loading
+                // 只要不是 4001 (Pending)，走到這邊代表任務有了結果(成功或失敗)，就可以關閉 Loading
                 document.getElementById("loading-overlay").classList.replace("flex", "hidden");
 
             } catch (error) {
