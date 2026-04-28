@@ -277,12 +277,10 @@
         // 核心改動：任務建立與輪詢邏輯
         // ==========================================
 
-        const apiUrl = "/api";
-
         // 第一步：發送 POST 請求建立任務
         async function fetchChargingPlan(requestBody) {
             try {
-                const response = await fetch(`${apiUrl}/EVMap/SmartChargingPlanner/plan`, {
+                const response = await fetch("/api/EVMap/SmartChargingPlanner/plan", {
                     method: "POST", 
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(encryptPayload(requestBody))
@@ -313,7 +311,7 @@
                 // 使用 URLSearchParams 自動對 uid 的特殊字元 (如 + 或 /) 進行 URLEncode
                 const params = new URLSearchParams({ uid: uid, jobId: jobId });
 
-                const response = await fetch(`${apiUrl}?${params.toString()}`, {
+                const response = await fetch(`/api/EVMap/SmartChargingPlanner/plan?${params.toString()}`, {
                     method: "GET",
                     headers: { "Content-Type": "application/json" }
                 });
