@@ -439,6 +439,12 @@
         }
 
         function selectStation(stationId) {
+            // ✅ 核心修正 1：如果現在「沒有」選取任何充電站，你又點擊了地圖空白處
+            // 就直接結束這個函數，不要去觸發重新畫線與縮放！
+            if (stationId === null && selectedStationId === null) {
+                return; 
+            }
+
             selectedStationId = stationId;
             const riskWarning = document.getElementById('risk-warning');
             
@@ -456,7 +462,9 @@
                 if(cardElement) cardElement.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
             } else {
                 if (riskWarning) riskWarning.classList.add('hidden');
-                drawRoute(originalGeometry, true);
+                // ✅ 核心修正 2：當取消選取充電站時，傳入 false！
+                // 這樣地圖的鏡頭就會「留在原地」，不會再煩人地縮放回全景了
+                drawRoute(originalGeometry, false);
             }
 
             renderAllMarkers(); 
